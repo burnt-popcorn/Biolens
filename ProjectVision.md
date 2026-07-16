@@ -13,7 +13,7 @@ A detailed log of the break down of said filed, analytics, clear visual aids
 3. perhaps ancestry
 ORF -> open reading frame- single stretch of DNA that contains 3 letters representing an Amino acid. It can read the cell and essentially translate it. 
 ## Tech Stack
-
+Next.js
 ## Future Features
 
 ## Questions
