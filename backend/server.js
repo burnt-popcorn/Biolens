@@ -47,7 +47,7 @@ app.use((err, req, res, next) => {
 
 // Database connection & Server initialization
 console.log('Connecting to MongoDB...');
-mongoose.connect(MONGO_URI)
+mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 5000 })
   .then(() => {
     console.log('Successfully connected to MongoDB.');
     app.listen(PORT, () => {
