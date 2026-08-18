@@ -83,6 +83,17 @@ function parseFasta(fastaString) {
   const baseCount = counts.A + (sequenceType === 'RNA' ? counts.U : counts.T) + counts.C + counts.G;
   const gcContent = baseCount > 0 ? ((counts.G + counts.C) / baseCount) * 100 : 0;
 
+  // Calculate Codon Frequencies for DNA/RNA
+  const codonFrequency = {};
+  if (sequenceType === 'DNA' || sequenceType === 'RNA') {
+    for (let i = 0; i <= sequence.length - 3; i += 3) {
+      const codon = sequence.substring(i, i + 3);
+      if (codon.length === 3) {
+        codonFrequency[codon] = (codonFrequency[codon] || 0) + 1;
+      }
+    }
+  }
+
   return {
     header,
     sequence,
@@ -91,6 +102,7 @@ function parseFasta(fastaString) {
       length,
       gcContent: parseFloat(gcContent.toFixed(2)),
       counts,
+      codonFrequency
     }
   };
 }
