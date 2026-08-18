@@ -87,6 +87,90 @@ const MARKERS = [
     risk: "Affected",
     description: "Pathogenic point mutation in the dog Dystrophin (DMD) gene leading to Muscular Dystrophy.",
     type: "DNA"
+  },
+  {
+    id: "actn3_sprint",
+    name: "ACTN3 Sprint variant (R577X)",
+    sequence: "CGCGGTCGCGG",
+    species: "Homo sapiens",
+    gene: "ACTN3",
+    ensemblId: "ENSG00000248333",
+    disease: "None",
+    category: "trait",
+    trait: "Muscle fiber composition",
+    value: "Sprint / Power Athlete Profile",
+    description: "Matches the R variant (Arg577) associated with alpha-actinin-3 production in fast-twitch fibers, typical of elite power athletes.",
+    type: "DNA"
+  },
+  {
+    id: "actn3_endurance",
+    name: "ACTN3 Endurance variant (R577X)",
+    sequence: "CGCGGTCGCGT",
+    species: "Homo sapiens",
+    gene: "ACTN3",
+    ensemblId: "ENSG00000248333",
+    disease: "None",
+    category: "trait",
+    trait: "Muscle fiber composition",
+    value: "Endurance Athlete Profile",
+    description: "Matches the X variant (577X nonsense mutation) associated with deficiency of alpha-actinin-3, typical of endurance athletes.",
+    type: "DNA"
+  },
+  {
+    id: "lct_tolerant",
+    name: "LCT Lactase Persistence variant",
+    sequence: "TGTGCTTTTCG",
+    species: "Homo sapiens",
+    gene: "LCT",
+    ensemblId: "ENSG00000168542",
+    disease: "None",
+    category: "trait",
+    trait: "Lactose Tolerance",
+    value: "Lactose Tolerant (Lactase Persistence)",
+    description: "Matches the MCM6 regulatory mutation that maintains active lactase enzyme production into adulthood.",
+    type: "DNA"
+  },
+  {
+    id: "lct_intolerant",
+    name: "LCT Lactase Non-persistence variant",
+    sequence: "TGTGCTTTTCA",
+    species: "Homo sapiens",
+    gene: "LCT",
+    ensemblId: "ENSG00000168542",
+    disease: "None",
+    category: "trait",
+    trait: "Lactose Tolerance",
+    value: "Lactose Intolerant (Lactase Non-persistence)",
+    description: "Matches the wild-type non-persistence genotype associated with typical adult lactose intolerance.",
+    type: "DNA"
+  },
+  {
+    id: "aldh2_flush",
+    name: "ALDH2 Alcohol Flush Variant",
+    sequence: "GAAATCGTCAC",
+    species: "Homo sapiens",
+    gene: "ALDH2",
+    ensemblId: "ENSG00000111295",
+    disease: "None",
+    category: "trait",
+    trait: "Alcohol Metabolism",
+    value: "Flush Reaction Active",
+    description: "Matches the ALDH2*2 allele associated with reduced aldehyde dehydrogenase activity, leading to acetaldehyde accumulation and flushing.",
+    type: "DNA"
+  },
+  {
+    id: "herc2_blue_eyes",
+    name: "HERC2 Eye Color Variant",
+    sequence: "GGCCTCGATGA",
+    species: "Homo sapiens",
+    gene: "HERC2",
+    ensemblId: "ENSG00000104687",
+    disease: "None",
+    category: "trait",
+    trait: "Eye Color predisposition",
+    value: "Predisposed to Blue/Green Eyes",
+    description: "Matches the HERC2 intron SNP associated with blue eye color phenotype.",
+    type: "DNA"
   }
 ];
 
@@ -155,11 +239,14 @@ function findMaxCagRepeats(sequence) {
 function analyzeSequence(sequence, header = '') {
   const normalizedHeader = header.toLowerCase();
   
-  // Check if this is Huntington's HTT sequence based on context
+  // 1. Huntington's CAG expansion alignment & check
   const isHtt = sequence.includes("ATGGCGACCCTGGAAAAG") || 
                 sequence.includes("GAGTCCCTCAAGTCCTTC") ||
                 normalizedHeader.includes("htt") || 
                 normalizedHeader.includes("huntington");
+
+  const diseaseRisks = [];
+  const traits = [];
 
   if (isHtt) {
     const cagCount = findMaxCagRepeats(sequence);
@@ -190,59 +277,70 @@ function analyzeSequence(sequence, header = '') {
           description,
           clinvarId: "14828"
         }
-      ]
+      ],
+      traits: []
     };
   }
 
-  // Standard marker search
+  // 2. Standard multi-marker alignment scan
   let bestMatch = null;
   let highestScore = 0.0;
 
   for (const marker of MARKERS) {
     const alignment = alignMarker(sequence, marker.sequence);
+    
+    // Maintain track of best matching overall gene for species/gene determination
     if (alignment.score > highestScore) {
       highestScore = alignment.score;
       bestMatch = { ...marker, score: alignment.score };
     }
-  }
 
-  // We consider an alignment score > 75% as a valid match
-  if (bestMatch && highestScore >= 75.0) {
-    const diseaseRisks = [];
-    if (bestMatch.disease !== "None") {
-      diseaseRisks.push({
-        disease: bestMatch.disease,
-        risk: bestMatch.risk,
-        description: bestMatch.description,
-        clinvarId: bestMatch.clinvarId
-      });
+    // High confidence alignment threshold (>= 90%)
+    if (alignment.score >= 90.0) {
+      if (marker.category === 'trait') {
+        traits.push({
+          trait: marker.trait,
+          value: marker.value,
+          description: marker.description
+        });
+      } else if (marker.disease !== 'None') {
+        diseaseRisks.push({
+          disease: marker.disease,
+          risk: marker.risk,
+          description: marker.description,
+          clinvarId: marker.clinvarId
+        });
+      }
     }
-
-    return {
-      species: bestMatch.species,
-      confidence: bestMatch.score,
-      geneMatched: bestMatch.gene,
-      ensemblId: bestMatch.ensemblId,
-      diseaseRisks
-    };
   }
 
-  // Fallback: If header lists species or we find standard motifs
+  // Determine metadata from best match
   let species = "Unknown";
-  if (normalizedHeader.includes("homo sapiens") || normalizedHeader.includes("human")) {
-    species = "Homo sapiens";
-  } else if (normalizedHeader.includes("sars-cov-2") || normalizedHeader.includes("coronavirus")) {
-    species = "SARS-CoV-2";
-  } else if (normalizedHeader.includes("canis") || normalizedHeader.includes("dog")) {
-    species = "Canis lupus familiaris";
+  let geneMatched = null;
+  let ensemblId = null;
+
+  if (bestMatch && highestScore >= 75.0) {
+    species = bestMatch.species;
+    geneMatched = bestMatch.gene;
+    ensemblId = bestMatch.ensemblId;
+  } else {
+    // Fallback: If header lists species
+    if (normalizedHeader.includes("homo sapiens") || normalizedHeader.includes("human")) {
+      species = "Homo sapiens";
+    } else if (normalizedHeader.includes("sars-cov-2") || normalizedHeader.includes("coronavirus")) {
+      species = "SARS-CoV-2";
+    } else if (normalizedHeader.includes("canis") || normalizedHeader.includes("dog")) {
+      species = "Canis lupus familiaris";
+    }
   }
 
   return {
     species,
-    confidence: species !== "Unknown" ? 90.0 : 0.0,
-    geneMatched: null,
-    ensemblId: null,
-    diseaseRisks: []
+    confidence: highestScore,
+    geneMatched,
+    ensemblId,
+    diseaseRisks,
+    traits
   };
 }
 

@@ -31,6 +31,7 @@ const AnalysisSchema = new mongoose.Schema({
       N: { type: Number, default: 0 },
       other: { type: Number, default: 0 },
     },
+    codonFrequency: { type: mongoose.Schema.Types.Mixed, default: {} },
   },
   geneMatched: {
     type: String,
@@ -42,6 +43,13 @@ const AnalysisSchema = new mongoose.Schema({
       risk: { type: String, required: true }, // e.g. "Normal", "Carrier", "High Risk", "Infection Detected"
       description: { type: String },
       clinvarId: { type: String }, // Optional ClinVar variant reference ID
+    },
+  ],
+  traits: [
+    {
+      trait: { type: String, required: true },
+      value: { type: String, required: true },
+      description: { type: String },
     },
   ],
   externalDetails: {

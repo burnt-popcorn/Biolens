@@ -10,7 +10,8 @@ const TEST_FILES = {
   hbb_sickle: path.join(__dirname, '../test_data/hbb_sickle.fasta'),
   cftr_deltaf508: path.join(__dirname, '../test_data/cftr_deltaf508.fasta'),
   huntington: path.join(__dirname, '../test_data/huntington_cag_expansion.fasta'),
-  sars_cov_2: path.join(__dirname, '../test_data/sars_cov_2.fasta')
+  sars_cov_2: path.join(__dirname, '../test_data/sars_cov_2.fasta'),
+  actn3_sprint: path.join(__dirname, '../test_data/actn3_sprint.fasta')
 };
 
 async function runTest(testName, filePath) {
@@ -42,6 +43,7 @@ async function runTest(testName, filePath) {
     console.log(`   - Gene Matched: ${matched.geneMatched}`);
     console.log(`   - Ensembl ID: ${matched.ensemblId}`);
     console.log(`   - Disease Risks Detected:`, JSON.stringify(matched.diseaseRisks, null, 2));
+    console.log(`   - Traits Detected:`, JSON.stringify(matched.traits, null, 2));
 
     // 3. Test API Enrichment (Ensembl API)
     console.log('3. Fetching annotations and external links from Ensembl REST API...');

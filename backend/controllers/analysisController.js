@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
+const mongoose = require('mongoose');
 
 // Models
 const DNAUpload = require('../models/DNAUpload');
@@ -16,6 +17,10 @@ const uploadDir = path.join(__dirname, '../uploads');
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true });
 }
+
+// In-memory simulation cache for running when database is offline
+const simulationCache = new Map();
+const isDbConnected = () => mongoose.connection.readyState === 1;
 
 // Multer Storage Configuration
 const storage = multer.diskStorage({
@@ -63,30 +68,18 @@ const uploadAndAnalyzeFasta = async (req, res) => {
     let uploadRecord = null;
 
     try {
-      // 1. Create a DNAUpload pending database record
-      uploadRecord = await DNAUpload.create({
-        filename: req.file.filename,
-        originalName: req.file.originalname,
-        status: 'pending'
-      });
-
-      // 2. Parse FASTA File
+      // 1. Parse FASTA File first
       const parsedFasta = await parseFastaFile(filePath);
-      
-      // Update upload stats
-      uploadRecord.sequenceLength = parsedFasta.stats.length;
-      uploadRecord.sequenceType = parsedFasta.sequenceType;
-      await uploadRecord.save();
 
       // Validate sequence length
       if (parsedFasta.stats.length === 0) {
         throw new Error('FASTA file does not contain a valid sequence');
       }
 
-      // 3. DNA Alignment & Mutation Matching (blastService)
+      // 2. DNA Alignment & Mutation Matching (blastService)
       const matchResult = analyzeSequence(parsedFasta.sequence, parsedFasta.header);
 
-      // 4. Enrich matched genes with real database info (diseaseService)
+      // 3. Enrich matched genes with real database info (diseaseService)
       const enrichment = await enrichWithEnsemblData(
         matchResult.ensemblId,
         matchResult.geneMatched,
@@ -108,36 +101,86 @@ const uploadAndAnalyzeFasta = async (req, res) => {
         });
       }
 
-      // 5. Save Analysis Results to MongoDB
-      const analysisRecord = await Analysis.create({
-        uploadId: uploadRecord._id,
-        species: matchResult.species,
-        confidence: matchResult.confidence,
-        sequenceType: parsedFasta.sequenceType,
-        stats: parsedFasta.stats,
-        geneMatched: matchResult.geneMatched,
-        diseaseRisks: matchResult.diseaseRisks,
-        externalDetails: {
-          description: enrichment.description || 'No detailed gene annotation available.',
-          location: enrichment.location || 'Unknown genomic coordinates.',
-          ensemblId: enrichment.ensemblId,
-          externalLinks: allLinks
-        }
-      });
+      // 4. Handle Save to MongoDB vs In-Memory Fallback
+      if (isDbConnected()) {
+        // DB Connected: Create actual Mongoose records
+        uploadRecord = await DNAUpload.create({
+          filename: req.file.filename,
+          originalName: req.file.originalname,
+          status: 'completed',
+          sequenceLength: parsedFasta.stats.length,
+          sequenceType: parsedFasta.sequenceType
+        });
 
-      // 6. Update DNAUpload to Completed
-      uploadRecord.status = 'completed';
-      await uploadRecord.save();
+        const analysisRecord = await Analysis.create({
+          uploadId: uploadRecord._id,
+          species: matchResult.species,
+          confidence: matchResult.confidence,
+          sequenceType: parsedFasta.sequenceType,
+          stats: parsedFasta.stats,
+          geneMatched: matchResult.geneMatched,
+          diseaseRisks: matchResult.diseaseRisks,
+          traits: matchResult.traits,
+          externalDetails: {
+            description: enrichment.description || 'No detailed gene annotation available.',
+            location: enrichment.location || 'Unknown genomic coordinates.',
+            ensemblId: enrichment.ensemblId,
+            externalLinks: allLinks
+          }
+        });
 
-      // Return full analysis details
-      return res.status(200).json({
-        success: true,
-        message: 'FASTA file analyzed successfully',
-        data: {
-          upload: uploadRecord,
-          analysis: analysisRecord
-        }
-      });
+        return res.status(200).json({
+          success: true,
+          message: 'FASTA file analyzed successfully',
+          data: {
+            upload: uploadRecord,
+            analysis: analysisRecord
+          }
+        });
+      } else {
+        // Database is offline: Run in Simulation Mode
+        const simId = 'simulated_' + Date.now();
+        uploadRecord = {
+          _id: simId,
+          filename: req.file.filename,
+          originalName: req.file.originalname,
+          uploadDate: new Date(),
+          sequenceLength: parsedFasta.stats.length,
+          sequenceType: parsedFasta.sequenceType,
+          status: 'completed'
+        };
+
+        const analysisRecord = {
+          _id: 'simulated_analysis_' + Date.now(),
+          uploadId: simId,
+          species: matchResult.species,
+          confidence: matchResult.confidence,
+          sequenceType: parsedFasta.sequenceType,
+          stats: parsedFasta.stats,
+          geneMatched: matchResult.geneMatched,
+          diseaseRisks: matchResult.diseaseRisks,
+          traits: matchResult.traits,
+          externalDetails: {
+            description: enrichment.description || 'No detailed gene annotation available (Simulation Mode).',
+            location: enrichment.location || 'Unknown coordinates.',
+            ensemblId: enrichment.ensemblId,
+            externalLinks: allLinks
+          },
+          createdAt: new Date()
+        };
+
+        // Cache in memory so results/history pages can resolve it
+        simulationCache.set(simId, { upload: uploadRecord, analysis: analysisRecord });
+
+        return res.status(200).json({
+          success: true,
+          message: 'FASTA file analyzed (Database Offline: Simulation Mode)',
+          data: {
+            upload: uploadRecord,
+            analysis: analysisRecord
+          }
+        });
+      }
 
     } catch (pipelineErr) {
       console.error('[Pipeline Error]:', pipelineErr);
@@ -149,13 +192,6 @@ const uploadAndAnalyzeFasta = async (req, res) => {
         } catch (unlinkErr) {
           console.error('Failed to delete failed file:', unlinkErr);
         }
-      }
-
-      // Update upload status to failed in database
-      if (uploadRecord) {
-        uploadRecord.status = 'failed';
-        uploadRecord.errorMessage = pipelineErr.message;
-        await uploadRecord.save();
       }
 
       return res.status(500).json({
@@ -171,15 +207,28 @@ const uploadAndAnalyzeFasta = async (req, res) => {
  */
 const getAnalysisHistory = async (req, res) => {
   try {
-    const uploads = await DNAUpload.find()
-      .sort({ uploadDate: -1 })
-      .limit(30);
+    if (isDbConnected()) {
+      const uploads = await DNAUpload.find()
+        .sort({ uploadDate: -1 })
+        .limit(30);
 
-    return res.status(200).json({
-      success: true,
-      count: uploads.length,
-      data: uploads
-    });
+      return res.status(200).json({
+        success: true,
+        count: uploads.length,
+        data: uploads
+      });
+    } else {
+      // Return history from simulation cache
+      const historyList = Array.from(simulationCache.values())
+        .map(item => item.upload)
+        .sort((a, b) => b.uploadDate - a.uploadDate);
+
+      return res.status(200).json({
+        success: true,
+        count: historyList.length,
+        data: historyList
+      });
+    }
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -192,6 +241,22 @@ const getAnalysisDetails = async (req, res) => {
   try {
     const { id } = req.params;
     
+    // First check simulation cache
+    if (simulationCache.has(id)) {
+      const cached = simulationCache.get(id);
+      return res.status(200).json({
+        success: true,
+        data: cached
+      });
+    }
+
+    if (!isDbConnected()) {
+      return res.status(503).json({
+        success: false,
+        error: 'Database is offline and request could not be resolved from simulation cache.'
+      });
+    }
+
     const uploadRecord = await DNAUpload.findById(id);
     if (!uploadRecord) {
       return res.status(404).json({ success: false, error: 'Upload record not found' });
